@@ -1,0 +1,165 @@
+openapi: 3.0.3
+info:
+  title: Workshop Order API
+  version: 1.0.0
+  description: API target consumida por el canal POS de tienda fisica.
+servers:
+  - url: https://z410yhtm4c.execute-api.us-east-1.amazonaws.com
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      summary: Crear nueva orden
+      tags:
+        - Orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              posOrder:
+                value:
+                  channel: PHYSICAL_STORE_POS
+                  pointOfSale: Caja #01
+                  sellerName: Vendedor
+                  currency: USD
+                  subtotal: 1393.8
+                  tax: 264.82
+                  total: 1658.62
+                  createdAt: '2026-05-21T20:00:00Z'
+                  items:
+                    - sku: LAPTOP-001
+                      name: Laptop
+                      quantity: 1
+                      unitPrice: 1299.0
+                      subtotal: 1299.0
+                    - sku: MOUSE-001
+                      name: Mouse
+                      quantity: 2
+                      unitPrice: 24.9
+                      subtotal: 49.8
+      responses:
+        '200':
+          description: Orden creada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '201':
+          description: Orden creada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Solicitud invalida.
+        '500':
+          description: Error interno de la API de ordenes.
+  /orders/{orderId}:
+    get:
+      operationId: getOrderById
+      summary: Obtener orden por ID
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Orden encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Orden no encontrada.
+        '500':
+          description: Error interno de la API de ordenes.
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required:
+        - channel
+        - pointOfSale
+        - sellerName
+        - currency
+        - subtotal
+        - tax
+        - total
+        - items
+        - createdAt
+      properties:
+        channel:
+          type: string
+          example: PHYSICAL_STORE_POS
+        pointOfSale:
+          type: string
+          example: Caja #01
+        sellerName:
+          type: string
+          example: Vendedor
+        currency:
+          type: string
+          example: USD
+        subtotal:
+          type: number
+          format: double
+        tax:
+          type: number
+          format: double
+        total:
+          type: number
+          format: double
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        createdAt:
+          type: string
+          format: date-time
+    OrderItem:
+      type: object
+      required:
+        - sku
+        - name
+        - quantity
+        - unitPrice
+        - subtotal
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+          format: double
+        subtotal:
+          type: number
+          format: double
+    OrderResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        orderId:
+          type: string
+        id:
+          type: string
+        status:
+          type: string
+          example: CREATED
+        total:
+          type: number
+          format: double
+        createdAt:
+          type: string
+          format: date-time

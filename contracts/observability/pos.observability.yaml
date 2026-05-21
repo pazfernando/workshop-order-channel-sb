@@ -1,0 +1,139 @@
+apiVersion: observability.platform/v1alpha1
+kind: ObservabilityContract
+metadata:
+  name: workshop-order-channel-pos
+  owner: team-order-channels
+  system: order-management
+  environment: dev
+  labels:
+    app.kubernetes.io/name: workshop-order-channel-pos
+    app.kubernetes.io/component: pos-channel
+    platform.example.com/channel: physical-store-pos
+  annotations:
+    backstage.io/component: workshop-order-channel-pos
+    platform.example.com/openapi: src/main/resources/openapi/order-api.yaml
+    platform.example.com/upstream-api: workshop-order-api
+spec:
+  service:
+    name: workshop-order-channel-pos
+    runtime: ecs-express
+    language: java
+    framework: spring-boot
+    tier: "3"
+    lifecycle: experimental
+  delivery:
+    mode: provision
+    target: aws
+    region: us-east-1
+  telemetry:
+    openTelemetry:
+      enabled: true
+      semanticConventions: opentelemetry
+      propagators:
+        - tracecontext
+        - b3
+      sampling:
+        strategy: parentbased_always_on
+        ratio: 1.0
+    resourceAttributes:
+      service.name: workshop-order-channel-pos
+      service.namespace: order-management
+      deployment.environment: dev
+      service.owner: team-order-channels
+      service.channel: physical-store-pos
+    signals:
+      traces:
+        enabled: true
+        ingestion: collector
+        backendClass: traces-standard
+      metrics:
+        enabled: true
+        ingestion: collector
+        backendClass: metrics-standard
+        catalog:
+          - name: InboundRequestCount
+            type: counter
+            unit: "{request}"
+            description: Total HTTP requests handled by the POS channel.
+            dimensions:
+              - route
+              - method
+              - status
+          - name: InboundRequestDuration
+            type: histogram
+            unit: ms
+            description: HTTP request latency for the POS channel.
+            dimensions:
+              - route
+              - method
+          - name: InboundRequestErrors
+            type: counter
+            unit: "{error}"
+            description: Failed HTTP requests handled by the POS channel.
+            dimensions:
+              - route
+              - status
+          - name: OutboundDependencyCallCount
+            type: counter
+            unit: "{call}"
+            description: Calls from the POS channel to the order API.
+            dimensions:
+              - dependency
+              - operation
+          - name: OutboundDependencyCallDuration
+            type: histogram
+            unit: ms
+            description: Latency of calls from the POS channel to the order API.
+            dimensions:
+              - dependency
+              - operation
+          - name: OutboundDependencyCallErrors
+            type: counter
+            unit: "{error}"
+            description: Failed calls from the POS channel to the order API.
+            dimensions:
+              - dependency
+              - operation
+      logs:
+        enabled: true
+        ingestion: collector
+        backendClass: logs-standard
+        format: json
+  capabilities:
+    dashboards:
+      enabled: true
+      preset: distributed-service
+    alerts:
+      enabled: true
+      rules:
+        - name: pos-high-create-order-error-rate
+          summary: POS order creation failures are above threshold.
+          severity: critical
+          condition: rate(OutboundDependencyCallErrors{operation="POST /orders"}[5m]) > 0.05
+          for: 5m
+          runbookUrl: https://github.com/pazfernando/workshop-order-channel-pos/blob/main/docs/runbooks/pos-order-create-errors.md
+        - name: pos-create-order-latency-high
+          summary: POS order creation latency is above threshold.
+          severity: medium
+          condition: p95(OutboundDependencyCallDuration{operation="POST /orders"}) > 1500
+          for: 10m
+          runbookUrl: https://github.com/pazfernando/workshop-order-channel-pos/blob/main/docs/runbooks/pos-order-create-latency.md
+    slos:
+      enabled: true
+      objectives:
+        - name: pos-order-create-availability
+          description: Successful POS order creation requests over total POS order creation requests.
+          indicator: availability
+          target: 99.5
+          window: 30d
+        - name: pos-order-create-latency
+          description: POS order creation p95 latency remains below 1500 ms.
+          indicator: latency
+          target: 95
+          window: 7d
+    dataManagement:
+      retention:
+        tracesDays: 7
+        metricsDays: 30
+        logsDays: 14
+      dataClassification: internal

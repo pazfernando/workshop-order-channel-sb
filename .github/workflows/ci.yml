@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: "17"
+  OBSERVABILITY_CONTRACT_PATH: contracts/observability/pos.observability.yaml
+
+jobs:
+  observability-contract:
+    name: Observability contract
+    uses: pazfernando/workshop-idp-o11y/.github/workflows/contract-consumer.yml@main
+    with:
+      contract_path: contracts/observability/pos.observability.yaml
+      upload_artifacts: true
+      generate_bindings: false
+      reuse_managed_suite: false
+      collector_endpoint: http://localhost:4318
+    secrets: inherit
+
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Verify observability contract path
+        run: |
+          set -euo pipefail
+          test -f "$OBSERVABILITY_CONTRACT_PATH"
+          grep -q "name: workshop-order-channel-pos" "$OBSERVABILITY_CONTRACT_PATH"
+          grep -q "team-order-channels" "$OBSERVABILITY_CONTRACT_PATH"
+
+      - name: Build and test
+        run: mvn -B verify

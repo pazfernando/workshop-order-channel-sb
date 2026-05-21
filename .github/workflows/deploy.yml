@@ -1,0 +1,343 @@
+name: Deploy
+run-name: ${{ format('Deploy POS ({0})', inputs.resource_prefix || 'aws-dev-1') }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_prefix:
+        description: Prefix used for ECS service, ECR repository, log group, and tags
+        required: false
+        default: aws-dev-1
+        type: string
+      log_retention_in_days:
+        description: CloudWatch log retention in days
+        required: false
+        default: "1"
+        type: string
+      export_strategy:
+        description: Telemetry export path applied to traces, metrics, and logs in the effective contract
+        required: false
+        default: collector
+        type: choice
+        options:
+          - collector
+          - direct
+      collector_endpoint:
+        description: Optional collector OTLP base endpoint
+        required: false
+        default: ""
+        type: string
+      collector_traces_endpoint:
+        description: Optional collector traces endpoint override
+        required: false
+        default: ""
+        type: string
+      collector_metrics_endpoint:
+        description: Optional collector metrics endpoint override
+        required: false
+        default: ""
+        type: string
+      order_api_base_url:
+        description: Order API base URL consumed by the POS channel
+        required: false
+        default: https://z410yhtm4c.execute-api.us-east-1.amazonaws.com
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  JAVA_VERSION: "17"
+  SERVICE_NAME: workshop-order-channel-pos
+  ENVIRONMENT_NAME: aws-dev
+  AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER != '' && vars.ECS_CLUSTER || 'default' }}
+  OBSERVABILITY_CONTRACT_PATH: contracts/observability/pos.observability.yaml
+  EFFECTIVE_OBSERVABILITY_CONTRACT_PATH: build/observability/pos.effective.observability.yaml
+
+jobs:
+  deploy:
+    name: Deploy to ECS Express Mode
+    runs-on: ubuntu-latest
+    environment: aws-dev
+
+    env:
+      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-1' }}
+      LOG_RETENTION_IN_DAYS: ${{ inputs.log_retention_in_days || '1' }}
+      EXPORT_STRATEGY: ${{ inputs.export_strategy || 'collector' }}
+      COLLECTOR_ENDPOINT_INPUT: ${{ inputs.collector_endpoint || '' }}
+      COLLECTOR_TRACES_ENDPOINT_INPUT: ${{ inputs.collector_traces_endpoint || '' }}
+      COLLECTOR_METRICS_ENDPOINT_INPUT: ${{ inputs.collector_metrics_endpoint || '' }}
+      ORDER_API_BASE_URL: ${{ inputs.order_api_base_url }}
+      SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
+      ECR_REPOSITORY: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
+      LOG_GROUP_NAME: ${{ format('/ecs/{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
+      EXECUTION_ROLE_ARN: ${{ vars.ECS_TASK_EXECUTION_ROLE_ARN != '' && vars.ECS_TASK_EXECUTION_ROLE_ARN || format('arn:aws:iam::{0}:role/ecsTaskExecutionRole', vars.AWS_ACCOUNT_ID) }}
+      INFRASTRUCTURE_ROLE_ARN: ${{ vars.ECS_INFRASTRUCTURE_ROLE_ARN != '' && vars.ECS_INFRASTRUCTURE_ROLE_ARN || format('arn:aws:iam::{0}:role/ecsInfrastructureRoleForExpressServices', vars.AWS_ACCOUNT_ID) }}
+      TASK_ROLE_ARN: ${{ vars.ECS_TASK_ROLE_ARN != '' && vars.ECS_TASK_ROLE_ARN || vars.ECS_TASK_EXECUTION_ROLE_ARN || format('arn:aws:iam::{0}:role/ecsTaskExecutionRole', vars.AWS_ACCOUNT_ID) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate workflow inputs
+        run: |
+          set -euo pipefail
+
+          if ! printf '%s' "$RESOURCE_PREFIX" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
+            echo "resource_prefix must be lowercase DNS-safe text, for example aws-dev-1." >&2
+            exit 1
+          fi
+
+          if ! printf '%s' "$LOG_RETENTION_IN_DAYS" | grep -Eq '^[0-9]+$'; then
+            echo "log_retention_in_days must be an integer." >&2
+            exit 1
+          fi
+
+          if [ -z "$AWS_ACCOUNT_ID" ]; then
+            echo "Repository variable AWS_ACCOUNT_ID is required for ECS Express Mode deployment." >&2
+            exit 1
+          fi
+
+          if [ "$EXPORT_STRATEGY" = "direct" ] && { [ -n "$COLLECTOR_ENDPOINT_INPUT" ] || [ -n "$COLLECTOR_TRACES_ENDPOINT_INPUT" ] || [ -n "$COLLECTOR_METRICS_ENDPOINT_INPUT" ]; }; then
+            echo "collector_* inputs cannot be combined with export_strategy=direct." >&2
+            exit 1
+          fi
+
+      - name: Prepare effective observability contract
+        run: |
+          set -euo pipefail
+          mkdir -p build/observability
+          cp "$OBSERVABILITY_CONTRACT_PATH" "$EFFECTIVE_OBSERVABILITY_CONTRACT_PATH"
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["EFFECTIVE_OBSERVABILITY_CONTRACT_PATH"])
+          export_strategy = os.environ["EXPORT_STRATEGY"].strip()
+          if export_strategy not in {"collector", "direct"}:
+              raise SystemExit(f"Unsupported export strategy: {export_strategy}")
+
+          text = path.read_text()
+          text = text.replace("        ingestion: collector", f"        ingestion: {export_strategy}")
+          text = text.replace("        ingestion: direct", f"        ingestion: {export_strategy}")
+          path.write_text(text)
+          PY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_GITHUB_ACTIONS_ROLE_ARN != '' && vars.AWS_GITHUB_ACTIONS_ROLE_ARN || format('arn:aws:iam::{0}:role/github-actions-ecs-role', vars.AWS_ACCOUNT_ID) }}
+          role-session-name: GitHubActionsECSExpressDeploy
+
+      - name: Consume observability IDP contract
+        id: observability
+        uses: pazfernando/workshop-idp-o11y/.github/actions/contract-consumer@main
+        with:
+          contract_path: ${{ env.EFFECTIVE_OBSERVABILITY_CONTRACT_PATH }}
+          upload_artifacts: true
+          generate_bindings: false
+          collector_endpoint: ${{ env.COLLECTOR_ENDPOINT_INPUT }}
+          collector_traces_endpoint: ${{ env.COLLECTOR_TRACES_ENDPOINT_INPUT }}
+          collector_metrics_endpoint: ${{ env.COLLECTOR_METRICS_ENDPOINT_INPUT }}
+          deploy_managed_suite: false
+          reuse_managed_suite: true
+          aws_region: ${{ env.AWS_REGION }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build and test
+        run: mvn -B verify
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repository and log group
+        run: |
+          set -euo pipefail
+
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --tags \
+                Key=Service,Value="$SERVICE_NAME" \
+                Key=ResourcePrefix,Value="$RESOURCE_PREFIX" \
+                Key=ManagedBy,Value=github-actions
+          fi
+
+          if ! aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --query 'logGroups[?logGroupName==`'"$LOG_GROUP_NAME"'`].logGroupName' --output text | grep -qx "$LOG_GROUP_NAME"; then
+            aws logs create-log-group --log-group-name "$LOG_GROUP_NAME"
+          fi
+
+          aws logs put-retention-policy \
+            --log-group-name "$LOG_GROUP_NAME" \
+            --retention-in-days "$LOG_RETENTION_IN_DAYS"
+
+      - name: Resolve ECS runtime environment
+        id: runtime-env
+        run: |
+          set -euo pipefail
+
+          EFFECTIVE_COLLECTOR_ENDPOINT="${{ steps.observability.outputs.effective_collector_endpoint }}"
+          EFFECTIVE_TRACES_ENDPOINT="$COLLECTOR_TRACES_ENDPOINT_INPUT"
+          EFFECTIVE_METRICS_ENDPOINT="$COLLECTOR_METRICS_ENDPOINT_INPUT"
+
+          if [ -z "$EFFECTIVE_TRACES_ENDPOINT" ] && [ -n "$EFFECTIVE_COLLECTOR_ENDPOINT" ]; then
+            EFFECTIVE_TRACES_ENDPOINT="${EFFECTIVE_COLLECTOR_ENDPOINT%/}/v1/traces"
+          fi
+
+          if [ -z "$EFFECTIVE_METRICS_ENDPOINT" ] && [ -n "$EFFECTIVE_COLLECTOR_ENDPOINT" ]; then
+            EFFECTIVE_METRICS_ENDPOINT="${EFFECTIVE_COLLECTOR_ENDPOINT%/}/v1/metrics"
+          fi
+
+          export EFFECTIVE_TRACES_ENDPOINT
+          export EFFECTIVE_METRICS_ENDPOINT
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          values = [
+              {"name": "SPRING_APPLICATION_NAME", "value": os.environ["SERVICE_NAME"]},
+              {"name": "ORDER_API_BASE_URL", "value": os.environ["ORDER_API_BASE_URL"]},
+              {"name": "OTEL_SERVICE_NAME", "value": os.environ["SERVICE_NAME"]},
+              {"name": "OTEL_PROPAGATORS", "value": "tracecontext,b3"},
+              {"name": "OTEL_RESOURCE_ATTRIBUTES", "value": ",".join([
+                  f"service.name={os.environ['SERVICE_NAME']}",
+                  "service.namespace=order-management",
+                  f"deployment.environment={os.environ['ENVIRONMENT_NAME']}",
+                  f"service.instance.id={os.environ['SERVICE_NAME_WITH_PREFIX']}",
+                  "service.channel=physical-store-pos",
+              ])},
+          ]
+
+          traces = os.environ.get("EFFECTIVE_TRACES_ENDPOINT", "")
+          metrics = os.environ.get("EFFECTIVE_METRICS_ENDPOINT", "")
+          if traces:
+              values.append({"name": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "value": traces})
+          if metrics:
+              values.append({"name": "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "value": metrics})
+
+          Path("build/deployment").mkdir(parents=True, exist_ok=True)
+          Path("build/deployment/ecs-environment.json").write_text(json.dumps(values, indent=2))
+          PY
+
+          {
+            echo "environment_json<<EOF"
+            cat build/deployment/ecs-environment.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          EFFECTIVE_TRACES_ENDPOINT: ${{ env.COLLECTOR_TRACES_ENDPOINT_INPUT }}
+          EFFECTIVE_METRICS_ENDPOINT: ${{ env.COLLECTOR_METRICS_ENDPOINT_INPUT }}
+
+      - name: Build and push image
+        id: build-image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Deploy ECS Express Mode service
+        id: ecs-express
+        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+        with:
+          service-name: ${{ env.SERVICE_NAME_WITH_PREFIX }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          execution-role-arn: ${{ env.EXECUTION_ROLE_ARN }}
+          infrastructure-role-arn: ${{ env.INFRASTRUCTURE_ROLE_ARN }}
+          task-role-arn: ${{ env.TASK_ROLE_ARN }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          container-port: 8080
+          health-check-path: /actuator/health
+          log-group: ${{ env.LOG_GROUP_NAME }}
+          log-stream-prefix: ecs
+          environment-variables: ${{ steps.runtime-env.outputs.environment_json }}
+          tags: |
+            [
+              {"key": "Service", "value": "${{ env.SERVICE_NAME }}"},
+              {"key": "ResourcePrefix", "value": "${{ env.RESOURCE_PREFIX }}"},
+              {"key": "Environment", "value": "${{ env.ENVIRONMENT_NAME }}"},
+              {"key": "ObservabilityContract", "value": "${{ env.OBSERVABILITY_CONTRACT_PATH }}"}
+            ]
+          mutate-tags-on-update: "true"
+
+      - name: Persist deployment metadata
+        run: |
+          set -euo pipefail
+          mkdir -p build/deployment build/observability
+
+          printf '%s\n' '${{ steps.observability.outputs.validation_message }}' > build/observability/validation.txt
+          printf '%s\n' '${{ steps.observability.outputs.plan_json }}' > build/observability/plan.json
+
+          cat > build/deployment/deployment-metadata.json <<JSON
+          {
+            "serviceName": "${SERVICE_NAME}",
+            "ecsServiceName": "${SERVICE_NAME_WITH_PREFIX}",
+            "ecsCluster": "${ECS_CLUSTER}",
+            "ecsServiceArn": "${{ steps.ecs-express.outputs.service-arn }}",
+            "endpoint": "${{ steps.ecs-express.outputs.endpoint }}",
+            "image": "${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ github.sha }}",
+            "resourcePrefix": "${RESOURCE_PREFIX}",
+            "environmentName": "${ENVIRONMENT_NAME}",
+            "awsRegion": "${AWS_REGION}",
+            "logGroupName": "${LOG_GROUP_NAME}",
+            "logRetentionInDays": "${LOG_RETENTION_IN_DAYS}",
+            "observabilityContractPath": "${OBSERVABILITY_CONTRACT_PATH}",
+            "effectiveObservabilityContractPath": "${EFFECTIVE_OBSERVABILITY_CONTRACT_PATH}",
+            "exportStrategy": "${EXPORT_STRATEGY}",
+            "managedSuiteEnabled": "${{ steps.observability.outputs.managed_suite_enabled }}",
+            "managedSuiteGrafanaUrl": "${{ steps.observability.outputs.managed_suite_grafana_url }}",
+            "workloadDashboardUrl": "${{ steps.observability.outputs.workload_dashboard_url }}",
+            "effectiveCollectorEndpoint": "${{ steps.observability.outputs.effective_collector_endpoint }}"
+          }
+          JSON
+
+      - name: Upload deployment handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SERVICE_NAME_WITH_PREFIX }}-deployment-handoff
+          path: |
+            build/deployment/deployment-metadata.json
+            build/deployment/ecs-environment.json
+            build/observability/validation.txt
+            build/observability/plan.json
+            ${{ env.EFFECTIVE_OBSERVABILITY_CONTRACT_PATH }}
+          if-no-files-found: error
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "## POS ECS Express deployment"
+            echo ""
+            echo "- ECS service: \`${SERVICE_NAME_WITH_PREFIX}\`"
+            echo "- ECS cluster: \`${ECS_CLUSTER}\`"
+            echo "- ECR repository: \`${ECR_REPOSITORY}\`"
+            echo "- Image: \`${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ github.sha }}\`"
+            echo "- Endpoint: ${{ steps.ecs-express.outputs.endpoint }}"
+            echo "- Resource prefix: \`${RESOURCE_PREFIX}\`"
+            echo "- Export strategy: \`${EXPORT_STRATEGY}\`"
+            echo "- Effective collector endpoint: \`${{ steps.observability.outputs.effective_collector_endpoint }}\`"
+            echo "- Log group: \`${LOG_GROUP_NAME}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>POS Tienda Fisica</title>
+    <link rel="stylesheet" th:href="@{/webjars/bootstrap/5.3.0/css/bootstrap.min.css}">
+    <link rel="stylesheet" th:href="@{/css/pos.css}">
+</head>
+<body>
+<header class="pos-topbar">
+    <div class="register-badge" th:text="${cashRegister}">Caja #01</div>
+    <label class="seller-field">
+        <span>Vendedor:</span>
+        <input id="sellerName" class="form-control form-control-lg" type="text" value="Vendedor">
+    </label>
+    <div id="clock" class="clock">--:--:--</div>
+</header>
+
+<main class="pos-shell">
+    <section class="pos-panel catalog-panel">
+        <div class="panel-heading">
+            <h1>Catalogo</h1>
+            <span>Productos</span>
+        </div>
+        <div class="product-grid">
+            <button th:each="product : ${products}"
+                    class="product-tile"
+                    type="button"
+                    th:data-sku="${product.sku()}"
+                    th:data-name="${product.name()}"
+                    th:data-price="${product.price()}">
+                <span class="product-name" th:text="${product.name()}">Laptop</span>
+                <span class="product-price" th:text="${'$' + product.price()}">$1299.00</span>
+            </button>
+        </div>
+    </section>
+
+    <section class="pos-panel cart-panel">
+        <div class="panel-heading">
+            <h1>Carrito</h1>
+            <span>Venta actual</span>
+        </div>
+
+        <div class="cart-table-wrap">
+            <table class="table table-dark table-hover align-middle cart-table">
+                <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th class="qty-col">Cant.</th>
+                    <th>Unit.</th>
+                    <th>Subtotal</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody id="cartBody">
+                <tr class="empty-cart-row">
+                    <td colspan="5">Seleccione productos del catalogo.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="totals-box">
+            <div>
+                <span>Subtotal</span>
+                <strong id="subtotalValue">$0.00</strong>
+            </div>
+            <div>
+                <span>IVA 19%</span>
+                <strong id="taxValue">$0.00</strong>
+            </div>
+            <div class="grand-total">
+                <span>Total</span>
+                <strong id="totalValue">$0.00</strong>
+            </div>
+        </div>
+
+        <button id="payButton" class="pay-button" type="button" disabled>
+            PAGAR / CREAR ORDEN
+        </button>
+    </section>
+
+    <section class="pos-panel orders-panel">
+        <div class="panel-heading">
+            <h1>Ordenes</h1>
+            <span>Ultimas 5</span>
+        </div>
+
+        <div class="lookup-box">
+            <input id="lookupOrderId" class="form-control form-control-lg" type="text" placeholder="ID de orden">
+            <button id="lookupButton" class="btn btn-info btn-lg" type="button">Buscar orden</button>
+        </div>
+
+        <div id="recentOrders" class="recent-orders">
+            <div class="empty-orders">No hay ordenes creadas en esta sesion.</div>
+        </div>
+    </section>
+</main>
+
+<div class="modal fade" id="confirmationModal" tabindex="-1" aria-labelledby="confirmationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content pos-modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="confirmationModalLabel">Orden creada</h2>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <div class="confirmation-number" id="confirmationOrderId">--</div>
+                <div class="confirmation-total" id="confirmationTotal">$0.00</div>
+                <pre id="confirmationPayload" class="order-json"></pre>
+            </div>
+            <div class="modal-footer">
+                <button id="printTicketButton" type="button" class="btn btn-outline-light btn-lg">Imprimir ticket</button>
+                <button id="newSaleButton" type="button" class="btn btn-success btn-lg" data-bs-dismiss="modal">Nueva venta</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="orderDetailModal" tabindex="-1" aria-labelledby="orderDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content pos-modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="orderDetailModalLabel">Detalle de orden</h2>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="orderDetailContent" class="order-json"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+<script th:src="@{/webjars/jquery/3.7.1/jquery.min.js}"></script>
+<script th:src="@{/webjars/bootstrap/5.3.0/js/bootstrap.bundle.min.js}"></script>
+<script th:inline="javascript">
+    window.POS_CONFIG = {
+        taxRate: Number(/*[[${taxRate}]]*/ '0.19'),
+        cashRegister: /*[[${cashRegister}]]*/ 'Caja #01'
+    };
+</script>
+<script th:src="@{/js/pos.js}"></script>
+</body>
+</html>

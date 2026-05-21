@@ -1,0 +1,36 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: workshop-order-channel-pos
+  title: Workshop Order Channel POS
+  description: Demo POS de tienda fisica para crear y consultar ordenes.
+  annotations:
+    backstage.io/source-location: url:https://example.com/workshop-order-channel-pos
+    platform.example.com/observability-contract: contracts/observability/pos.observability.yaml
+    platform.example.com/openapi: src/main/resources/openapi/order-api.yaml
+  tags:
+    - java
+    - spring-boot
+    - pos
+    - orders
+spec:
+  type: service
+  lifecycle: experimental
+  owner: team-order-channels
+  system: order-management
+  providesApis:
+    - workshop-order-channel-pos-internal
+  consumesApis:
+    - workshop-order-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: workshop-order-api
+  description: API Gateway de ordenes consumida por el canal POS.
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: team-order-channels
+  definition:
+    $text: ./src/main/resources/openapi/order-api.yaml
