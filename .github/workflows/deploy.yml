@@ -257,7 +257,7 @@ jobs:
               values.append({"name": "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "value": metrics})
 
           Path("build/deployment").mkdir(parents=True, exist_ok=True)
-          Path("build/deployment/ecs-environment.json").write_text(json.dumps(values, indent=2))
+          Path("build/deployment/ecs-environment.json").write_text(json.dumps(values, indent=2) + "\n")
           PY
 
           {
