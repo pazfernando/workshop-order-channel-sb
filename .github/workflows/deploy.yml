@@ -48,7 +48,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   JAVA_VERSION: "17"
@@ -133,9 +132,10 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.AWS_GITHUB_ACTIONS_ROLE_ARN != '' && vars.AWS_GITHUB_ACTIONS_ROLE_ARN || format('arn:aws:iam::{0}:role/github-actions-ecs-role', vars.AWS_ACCOUNT_ID) }}
-          role-session-name: GitHubActionsECSExpressDeploy
 
       - name: Consume observability IDP contract
         id: observability
@@ -151,9 +151,9 @@ jobs:
           reuse_managed_suite: true
           aws_region: ${{ env.AWS_REGION }}
         env:
-          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
 

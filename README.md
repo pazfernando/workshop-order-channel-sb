@@ -63,11 +63,16 @@ El workflow de despliegue espera estas variables de repositorio o ambiente:
 
 - `AWS_ACCOUNT_ID`: cuenta AWS objetivo.
 - `AWS_REGION`: region AWS, con fallback `us-east-1`.
-- `AWS_GITHUB_ACTIONS_ROLE_ARN`: rol OIDC de GitHub Actions. Si no se define, usa `arn:aws:iam::<AWS_ACCOUNT_ID>:role/github-actions-ecs-role`.
 - `ECS_TASK_EXECUTION_ROLE_ARN`: rol de ejecucion ECS. Si no se define, usa `arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskExecutionRole`.
 - `ECS_INFRASTRUCTURE_ROLE_ARN`: rol de infraestructura ECS Express Mode. Si no se define, usa `arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices`.
 - `ECS_TASK_ROLE_ARN`: rol de tarea opcional. Si no se define, reutiliza el rol de ejecucion.
 - `ECS_CLUSTER`: cluster ECS opcional. Si no se define, usa `default`.
+
+El ambiente `aws-dev` debe tener estos secretos para autenticar el runner:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN`
 
 Inputs principales de despliegue:
 
