@@ -61,12 +61,13 @@ El nombre efectivo del servicio ECS Express Mode queda en el formato:
 
 El workflow de despliegue espera estas variables de repositorio o ambiente:
 
-- `AWS_ACCOUNT_ID`: cuenta AWS objetivo.
 - `AWS_REGION`: region AWS, con fallback `us-east-1`.
-- `ECS_TASK_EXECUTION_ROLE_ARN`: rol de ejecucion ECS. Si no se define, usa `arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskExecutionRole`.
-- `ECS_INFRASTRUCTURE_ROLE_ARN`: rol de infraestructura ECS Express Mode. Si no se define, usa `arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices`.
+- `ECS_TASK_EXECUTION_ROLE_ARN`: rol de ejecucion ECS. Si no se define, usa `arn:aws:iam::<cuenta autenticada>:role/ecsTaskExecutionRole`.
+- `ECS_INFRASTRUCTURE_ROLE_ARN`: rol de infraestructura ECS Express Mode. Si no se define, usa `arn:aws:iam::<cuenta autenticada>:role/ecsInfrastructureRoleForExpressServices`.
 - `ECS_TASK_ROLE_ARN`: rol de tarea opcional. Si no se define, reutiliza el rol de ejecucion.
 - `ECS_CLUSTER`: cluster ECS opcional. Si no se define, usa `default`.
+
+La cuenta AWS se resuelve desde las credenciales configuradas en el runner con `aws sts get-caller-identity`.
 
 El ambiente `aws-dev` debe tener estos secretos para autenticar el runner:
 
