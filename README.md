@@ -69,6 +69,13 @@ El workflow de despliegue espera estas variables de repositorio o ambiente:
 
 La cuenta AWS se resuelve desde las credenciales configuradas en el runner con `aws sts get-caller-identity`.
 
+El workflow prepara los roles IAM requeridos por ECS Express Mode antes del despliegue:
+
+- El rol de ejecucion debe confiar en `ecs-tasks.amazonaws.com` y tener la politica administrada `AmazonECSTaskExecutionRolePolicy`.
+- El rol de infraestructura debe confiar en `ecs.amazonaws.com` y tener la politica administrada `AmazonECSInfrastructureRoleforExpressGatewayServices`.
+
+Las credenciales del runner deben poder ejecutar `iam:GetRole`, `iam:CreateRole`, `iam:UpdateAssumeRolePolicy`, `iam:ListAttachedRolePolicies`, `iam:AttachRolePolicy` e `iam:PassRole` sobre esos roles.
+
 El ambiente `aws-dev` debe tener estos secretos para autenticar el runner:
 
 - `AWS_ACCESS_KEY_ID`

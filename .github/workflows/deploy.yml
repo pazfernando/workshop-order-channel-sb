@@ -154,6 +154,93 @@ jobs:
           ECS_INFRASTRUCTURE_ROLE_ARN: ${{ vars.ECS_INFRASTRUCTURE_ROLE_ARN }}
           ECS_TASK_ROLE_ARN: ${{ vars.ECS_TASK_ROLE_ARN }}
 
+      - name: Ensure ECS Express IAM roles
+        run: |
+          set -euo pipefail
+
+          mkdir -p build/iam
+
+          role_name_from_arn() {
+            local arn="$1"
+            local account_id="$2"
+
+            if ! printf '%s' "$arn" | grep -Eq "^arn:aws:iam::${account_id}:role/.+"; then
+              echo "Role ARN must belong to account ${account_id}: ${arn}" >&2
+              exit 1
+            fi
+
+            printf '%s' "${arn##*/}"
+          }
+
+          ensure_role() {
+            local role_name="$1"
+            local trust_file="$2"
+            local policy_arn="$3"
+
+            if aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
+              aws iam update-assume-role-policy \
+                --role-name "$role_name" \
+                --policy-document "file://${trust_file}"
+            else
+              aws iam create-role \
+                --role-name "$role_name" \
+                --assume-role-policy-document "file://${trust_file}" >/dev/null
+            fi
+
+            if ! aws iam list-attached-role-policies \
+                --role-name "$role_name" \
+                --query 'AttachedPolicies[].PolicyArn' \
+                --output text | tr '\t' '\n' | grep -qx "$policy_arn"; then
+              aws iam attach-role-policy \
+                --role-name "$role_name" \
+                --policy-arn "$policy_arn"
+            fi
+          }
+
+          cat > build/iam/ecs-task-execution-trust-policy.json <<'JSON'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ecs-tasks.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          JSON
+
+          cat > build/iam/ecs-express-infrastructure-trust-policy.json <<'JSON'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "AllowAccessInfrastructureForECSExpressServices",
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ecs.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          JSON
+
+          execution_role_name="$(role_name_from_arn "${{ steps.aws-context.outputs.execution_role_arn }}" "${{ steps.aws-context.outputs.account_id }}")"
+          infrastructure_role_name="$(role_name_from_arn "${{ steps.aws-context.outputs.infrastructure_role_arn }}" "${{ steps.aws-context.outputs.account_id }}")"
+
+          ensure_role \
+            "$execution_role_name" \
+            build/iam/ecs-task-execution-trust-policy.json \
+            arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+          ensure_role \
+            "$infrastructure_role_name" \
+            build/iam/ecs-express-infrastructure-trust-policy.json \
+            arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
+
       - name: Consume observability IDP contract
         id: observability
         uses: pazfernando/workshop-idp-o11y/.github/actions/contract-consumer@main
