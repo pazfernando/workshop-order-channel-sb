@@ -16,7 +16,7 @@ metadata:
 spec:
   service:
     name: workshop-order-channel-pos
-    runtime: ecs-express
+    runtime: jvm
     language: java
     framework: spring-boot
     tier: "3"
@@ -51,49 +51,22 @@ spec:
         ingestion: collector
         backendClass: metrics-standard
         catalog:
-          - name: InboundRequestCount
-            type: counter
-            unit: "{request}"
-            description: Total HTTP requests handled by the POS channel.
-            dimensions:
-              - route
-              - method
-              - status
-          - name: InboundRequestDuration
+          - name: http.server.request.duration
             type: histogram
-            unit: ms
-            description: HTTP request latency for the POS channel.
+            unit: s
+            description: HTTP server request duration emitted by OpenTelemetry instrumentation.
             dimensions:
-              - route
-              - method
-          - name: InboundRequestErrors
-            type: counter
-            unit: "{error}"
-            description: Failed HTTP requests handled by the POS channel.
-            dimensions:
-              - route
-              - status
-          - name: OutboundDependencyCallCount
-            type: counter
-            unit: "{call}"
-            description: Calls from the POS channel to the order API.
-            dimensions:
-              - dependency
-              - operation
-          - name: OutboundDependencyCallDuration
+              - http.route
+              - http.request.method
+              - http.response.status_code
+          - name: http.client.request.duration
             type: histogram
-            unit: ms
-            description: Latency of calls from the POS channel to the order API.
+            unit: s
+            description: HTTP client request duration emitted by OpenTelemetry instrumentation.
             dimensions:
-              - dependency
-              - operation
-          - name: OutboundDependencyCallErrors
-            type: counter
-            unit: "{error}"
-            description: Failed calls from the POS channel to the order API.
-            dimensions:
-              - dependency
-              - operation
+              - server.address
+              - http.request.method
+              - http.response.status_code
       logs:
         enabled: true
         ingestion: collector
@@ -102,20 +75,20 @@ spec:
   capabilities:
     dashboards:
       enabled: true
-      preset: distributed-service
+      preset: monolith-business-app
     alerts:
       enabled: true
       rules:
         - name: pos-high-create-order-error-rate
           summary: POS order creation failures are above threshold.
           severity: critical
-          condition: rate(OutboundDependencyCallErrors{operation="POST /orders"}[5m]) > 0.05
+          condition: sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) > 0.05
           for: 5m
           runbookUrl: https://github.com/pazfernando/workshop-order-channel-pos/blob/main/docs/runbooks/pos-order-create-errors.md
         - name: pos-create-order-latency-high
           summary: POS order creation latency is above threshold.
           severity: medium
-          condition: p95(OutboundDependencyCallDuration{operation="POST /orders"}) > 1500
+          condition: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m]))) > 1.5
           for: 10m
           runbookUrl: https://github.com/pazfernando/workshop-order-channel-pos/blob/main/docs/runbooks/pos-order-create-latency.md
     slos:
