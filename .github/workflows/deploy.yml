@@ -2,9 +2,6 @@ name: Deploy
 run-name: ${{ format('Deploy POS ({0})', inputs.resource_prefix || 'aws-dev-sb') }}
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       resource_prefix:
@@ -13,9 +10,18 @@ on:
         default: aws-dev-sb
         type: string
       vpc_id:
-        description: VPC ID for the ECS service
+        description: VPC ID used to resolve subnet IDs when subnet_ids is not provided
+        required: true
+        type: string
+      subnet_ids:
+        description: Comma-separated subnet IDs for the ECS Express service
         required: false
-        default: vpc-0a1b2c3d4e5f6g7h8
+        default: ""
+        type: string
+      security_group_ids:
+        description: Optional comma-separated security group IDs for the ECS Express service
+        required: false
+        default: ""
         type: string
       log_retention_in_days:
         description: CloudWatch log retention in days
@@ -170,7 +176,10 @@ jobs:
       COLLECTOR_ENDPOINT_INPUT: ${{ inputs.collector_endpoint || '' }}
       COLLECTOR_TRACES_ENDPOINT_INPUT: ${{ inputs.collector_traces_endpoint || '' }}
       COLLECTOR_METRICS_ENDPOINT_INPUT: ${{ inputs.collector_metrics_endpoint || '' }}
-      ORDER_API_BASE_URL: ${{ inputs.order_api_base_url }}
+      ORDER_API_BASE_URL: ${{ inputs.order_api_base_url || 'https://z410yhtm4c.execute-api.us-east-1.amazonaws.com' }}
+      ECS_VPC_ID: ${{ inputs.vpc_id || vars.ECS_VPC_ID || '' }}
+      ECS_SUBNET_IDS: ${{ inputs.subnet_ids || vars.ECS_SUBNET_IDS || '' }}
+      ECS_SECURITY_GROUP_IDS: ${{ inputs.security_group_ids || vars.ECS_SECURITY_GROUP_IDS || '' }}
       SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
       ECR_REPOSITORY: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
       LOG_GROUP_NAME: ${{ format('/ecs/{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
@@ -300,6 +309,45 @@ jobs:
             build/iam/ecs-express-infrastructure-trust-policy.json \
             arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
 
+      - name: Resolve ECS network configuration
+        id: network
+        run: |
+          set -euo pipefail
+
+          normalize_csv() {
+            printf '%s' "$1" \
+              | tr '\n\t ' ',' \
+              | sed -E 's/,+/,/g; s/^,//; s/,$//'
+          }
+
+          subnet_ids="$(normalize_csv "$ECS_SUBNET_IDS")"
+          security_group_ids="$(normalize_csv "$ECS_SECURITY_GROUP_IDS")"
+          vpc_id="$ECS_VPC_ID"
+
+          if [ -z "$vpc_id" ]; then
+            echo "vpc_id is required. Pass the workflow_dispatch input or configure ECS_VPC_ID." >&2
+            exit 1
+          fi
+
+          if [ -z "$subnet_ids" ]; then
+            subnet_ids="$(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=${vpc_id}" "Name=state,Values=available" \
+              --query 'Subnets[].SubnetId' \
+              --output text | tr '\t' ',')"
+            subnet_ids="$(normalize_csv "$subnet_ids")"
+          fi
+
+          if [ -z "$subnet_ids" ]; then
+            echo "No available ECS subnet IDs were found for VPC ${vpc_id} in ${AWS_REGION}." >&2
+            echo "Pass subnet_ids when dispatching the workflow or configure ECS_SUBNET_IDS." >&2
+            exit 1
+          fi
+
+          {
+            echo "subnet_ids=$subnet_ids"
+            echo "security_group_ids=$security_group_ids"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -415,6 +463,8 @@ jobs:
           infrastructure-role-arn: ${{ steps.aws-context.outputs.infrastructure_role_arn }}
           task-role-arn: ${{ steps.aws-context.outputs.task_role_arn }}
           cluster: ${{ env.ECS_CLUSTER }}
+          subnets: ${{ steps.network.outputs.subnet_ids }}
+          security-groups: ${{ steps.network.outputs.security_group_ids }}
           container-port: 8080
           health-check-path: /actuator/health
           log-group: ${{ env.LOG_GROUP_NAME }}

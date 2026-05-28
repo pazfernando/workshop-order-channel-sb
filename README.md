@@ -48,10 +48,10 @@ ORDER_API_BASE_URL=https://z410yhtm4c.execute-api.us-east-1.amazonaws.com mvn sp
 ## Workflows
 
 - `CI`: valida el contrato de observabilidad contra `workshop-idp-o11y` y ejecuta `mvn -B verify`.
-- `Deploy`: genera un contrato efectivo segun `export_strategy`, consume el IDP de observabilidad, compila la aplicacion, construye la imagen Docker, la publica en ECR y despliega el servicio en Amazon ECS Express Mode.
+- `Deploy`: workflow manual que genera un contrato efectivo segun `export_strategy`, consume el IDP de observabilidad, compila la aplicacion, construye la imagen Docker, la publica en ECR y despliega el servicio en Amazon ECS Express Mode.
 - `Teardown`: valida el prefijo y la confirmacion del despliegue, y elimina el servicio Amazon ECS Express Mode con `aws ecs delete-express-gateway-service`.
 
-Los workflows de despliegue y teardown usan siempre un prefijo. Debe enviarse como input `resource_prefix`; si no se envia, usan `aws-dev-1`.
+Los workflows de despliegue y teardown usan siempre un prefijo. Debe enviarse como input `resource_prefix`; si no se envia, usan `aws-dev-sb`.
 
 El nombre efectivo del servicio ECS Express Mode queda en el formato:
 
@@ -66,6 +66,9 @@ El workflow de despliegue espera estas variables de repositorio o ambiente:
 - `ECS_INFRASTRUCTURE_ROLE_ARN`: rol de infraestructura ECS Express Mode. Si no se define, usa `arn:aws:iam::<cuenta autenticada>:role/ecsInfrastructureRoleForExpressServices`.
 - `ECS_TASK_ROLE_ARN`: rol de tarea opcional. Si no se define, reutiliza el rol de ejecucion.
 - `ECS_CLUSTER`: cluster ECS opcional. Si no se define, usa `default`.
+- `ECS_SUBNET_IDS`: subnets opcionales para el servicio ECS Express Mode, separadas por coma. Si no se define, el workflow resuelve las subnets disponibles desde `vpc_id`.
+- `ECS_SECURITY_GROUP_IDS`: security groups opcionales para el servicio ECS Express Mode, separados por coma.
+- `ECS_VPC_ID`: VPC de respaldo para resolver subnets disponibles si el workflow se ejecuta sin input `vpc_id`.
 
 La cuenta AWS se resuelve desde las credenciales configuradas en el runner con `aws sts get-caller-identity`.
 
@@ -84,7 +87,10 @@ El ambiente `aws-dev` debe tener estos secretos para autenticar el runner:
 
 Inputs principales de despliegue:
 
-- `resource_prefix`: prefijo de servicio, repositorio ECR, logs y tags. Default `aws-dev-1`.
+- `resource_prefix`: prefijo de servicio, repositorio ECR, logs y tags. Default `aws-dev-sb`.
+- `vpc_id`: VPC obligatoria para resolver subnets cuando no se envia `subnet_ids`.
+- `subnet_ids`: subnets para ECS Express Mode, separadas por coma. Usar este input o la variable `ECS_SUBNET_IDS` si se quieren fijar subnets explicitas.
+- `security_group_ids`: security groups opcionales para ECS Express Mode, separados por coma.
 - `log_retention_in_days`: retencion del log group CloudWatch. Default `1`.
 - `export_strategy`: `collector` o `direct`. Default `collector`.
 - `collector_endpoint`, `collector_traces_endpoint`, `collector_metrics_endpoint`: endpoints OTLP opcionales cuando `export_strategy=collector`.
