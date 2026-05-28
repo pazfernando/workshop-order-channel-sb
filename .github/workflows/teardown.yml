@@ -1,5 +1,5 @@
 name: Teardown
-run-name: ${{ format('Teardown POS ({0})', inputs.resource_prefix || 'aws-dev-1') }}
+run-name: ${{ format('Teardown POS ({0})', inputs.resource_prefix || 'aws-dev-sb') }}
 
 on:
   workflow_dispatch:
@@ -7,12 +7,12 @@ on:
       resource_prefix:
         description: Prefix used by the deployment to tear down
         required: false
-        default: aws-dev-1
+        default: aws-dev-sb
         type: string
-      confirm_deployment:
-        description: Type the exact ECS Express service name to confirm teardown
-        required: true
-        default: aws-dev-1-workshop-order-channel-pos
+      confirm:
+        description: Type 'yes' to confirm teardown
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -32,8 +32,8 @@ jobs:
     environment: aws-dev
 
     env:
-      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-1' }}
-      SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
+      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-sb' }}
+      SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
 
     steps:
       - name: Validate confirmation
@@ -41,12 +41,12 @@ jobs:
           set -euo pipefail
 
           if ! printf '%s' "$RESOURCE_PREFIX" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
-            echo "resource_prefix must be lowercase DNS-safe text, for example aws-dev-1." >&2
+            echo "resource_prefix must be lowercase DNS-safe text, for example aws-dev-sb." >&2
             exit 1
           fi
 
-          if [ "${{ inputs.confirm_deployment }}" != "$SERVICE_NAME_WITH_PREFIX" ]; then
-            echo "Confirmation mismatch. Expected '$SERVICE_NAME_WITH_PREFIX'." >&2
+          if [ "${{ inputs.confirm }}" != "yes" ]; then
+            echo "Please set confirm input to 'yes' to proceed with teardown." >&2
             exit 1
           fi
 

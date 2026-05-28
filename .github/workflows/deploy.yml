@@ -1,5 +1,5 @@
 name: Deploy
-run-name: ${{ format('Deploy POS ({0})', inputs.resource_prefix || 'aws-dev-1') }}
+run-name: ${{ format('Deploy POS ({0})', inputs.resource_prefix || 'aws-dev-sb') }}
 
 on:
   push:
@@ -10,7 +10,12 @@ on:
       resource_prefix:
         description: Prefix used for ECS service, ECR repository, log group, and tags
         required: false
-        default: aws-dev-1
+        default: aws-dev-sb
+        type: string
+      vpc_id:
+        description: VPC ID for the ECS service
+        required: false
+        default: vpc-0a1b2c3d4e5f6g7h8
         type: string
       log_retention_in_days:
         description: CloudWatch log retention in days
@@ -59,22 +64,26 @@ env:
   EFFECTIVE_OBSERVABILITY_CONTRACT_PATH: build/observability/pos.effective.observability.yaml
 
 jobs:
-  deploy:
-    name: Deploy to ECS Express Mode
+  observability:
+    name: Observability Contract
     runs-on: ubuntu-latest
     environment: aws-dev
+    outputs:
+      effective_collector_endpoint: ${{ steps.observability.outputs.effective_collector_endpoint }}
+      validation_message: ${{ steps.observability.outputs.validation_message }}
+      plan_json: ${{ steps.observability.outputs.plan_json }}
+      managed_suite_enabled: ${{ steps.observability.outputs.managed_suite_enabled }}
+      managed_suite_grafana_url: ${{ steps.observability.outputs.managed_suite_grafana_url }}
+      workload_dashboard_url: ${{ steps.observability.outputs.workload_dashboard_url }}
+      effective_contract_path: ${{ env.EFFECTIVE_OBSERVABILITY_CONTRACT_PATH }}
 
     env:
-      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-1' }}
+      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-sb' }}
       LOG_RETENTION_IN_DAYS: ${{ inputs.log_retention_in_days || '1' }}
       EXPORT_STRATEGY: ${{ inputs.export_strategy || 'collector' }}
       COLLECTOR_ENDPOINT_INPUT: ${{ inputs.collector_endpoint || '' }}
       COLLECTOR_TRACES_ENDPOINT_INPUT: ${{ inputs.collector_traces_endpoint || '' }}
       COLLECTOR_METRICS_ENDPOINT_INPUT: ${{ inputs.collector_metrics_endpoint || '' }}
-      ORDER_API_BASE_URL: ${{ inputs.order_api_base_url }}
-      SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
-      ECR_REPOSITORY: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
-      LOG_GROUP_NAME: ${{ format('/ecs/{0}-{1}', inputs.resource_prefix || 'aws-dev-1', 'workshop-order-channel-pos') }}
 
     steps:
       - name: Checkout repository
@@ -85,7 +94,7 @@ jobs:
           set -euo pipefail
 
           if ! printf '%s' "$RESOURCE_PREFIX" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
-            echo "resource_prefix must be lowercase DNS-safe text, for example aws-dev-1." >&2
+            echo "resource_prefix must be lowercase DNS-safe text, for example aws-dev-sb." >&2
             exit 1
           fi
 
@@ -119,6 +128,56 @@ jobs:
           text = text.replace("        ingestion: direct", f"        ingestion: {export_strategy}")
           path.write_text(text)
           PY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Consume observability IDP contract
+        id: observability
+        uses: pazfernando/workshop-idp-o11y/.github/actions/contract-consumer@main
+        with:
+          contract_path: ${{ env.EFFECTIVE_OBSERVABILITY_CONTRACT_PATH }}
+          upload_artifacts: true
+          generate_bindings: false
+          collector_endpoint: ${{ env.COLLECTOR_ENDPOINT_INPUT }}
+          collector_traces_endpoint: ${{ env.COLLECTOR_TRACES_ENDPOINT_INPUT }}
+          collector_metrics_endpoint: ${{ env.COLLECTOR_METRICS_ENDPOINT_INPUT }}
+          deploy_managed_suite: false
+          reuse_managed_suite: true
+          aws_region: ${{ env.AWS_REGION }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+  deploy:
+    name: Deploy to ECS Express Mode
+    needs: observability
+    runs-on: ubuntu-latest
+    environment: aws-dev
+
+    env:
+      RESOURCE_PREFIX: ${{ inputs.resource_prefix || 'aws-dev-sb' }}
+      LOG_RETENTION_IN_DAYS: ${{ inputs.log_retention_in_days || '1' }}
+      EXPORT_STRATEGY: ${{ inputs.export_strategy || 'collector' }}
+      COLLECTOR_ENDPOINT_INPUT: ${{ inputs.collector_endpoint || '' }}
+      COLLECTOR_TRACES_ENDPOINT_INPUT: ${{ inputs.collector_traces_endpoint || '' }}
+      COLLECTOR_METRICS_ENDPOINT_INPUT: ${{ inputs.collector_metrics_endpoint || '' }}
+      ORDER_API_BASE_URL: ${{ inputs.order_api_base_url }}
+      SERVICE_NAME_WITH_PREFIX: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
+      ECR_REPOSITORY: ${{ format('{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
+      LOG_GROUP_NAME: ${{ format('/ecs/{0}-{1}', inputs.resource_prefix || 'aws-dev-sb', 'workshop-order-channel-pos') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
@@ -241,26 +300,6 @@ jobs:
             build/iam/ecs-express-infrastructure-trust-policy.json \
             arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
 
-      - name: Consume observability IDP contract
-        id: observability
-        uses: pazfernando/workshop-idp-o11y/.github/actions/contract-consumer@main
-        with:
-          contract_path: ${{ env.EFFECTIVE_OBSERVABILITY_CONTRACT_PATH }}
-          upload_artifacts: true
-          generate_bindings: false
-          collector_endpoint: ${{ env.COLLECTOR_ENDPOINT_INPUT }}
-          collector_traces_endpoint: ${{ env.COLLECTOR_TRACES_ENDPOINT_INPUT }}
-          collector_metrics_endpoint: ${{ env.COLLECTOR_METRICS_ENDPOINT_INPUT }}
-          deploy_managed_suite: false
-          reuse_managed_suite: true
-          aws_region: ${{ env.AWS_REGION }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -302,7 +341,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          EFFECTIVE_COLLECTOR_ENDPOINT="${{ steps.observability.outputs.effective_collector_endpoint }}"
+          EFFECTIVE_COLLECTOR_ENDPOINT="${{ needs.observability.outputs.effective_collector_endpoint }}"
           EFFECTIVE_TRACES_ENDPOINT="$COLLECTOR_TRACES_ENDPOINT_INPUT"
           EFFECTIVE_METRICS_ENDPOINT="$COLLECTOR_METRICS_ENDPOINT_INPUT"
 
@@ -395,8 +434,8 @@ jobs:
           set -euo pipefail
           mkdir -p build/deployment build/observability
 
-          printf '%s\n' '${{ steps.observability.outputs.validation_message }}' > build/observability/validation.txt
-          printf '%s\n' '${{ steps.observability.outputs.plan_json }}' > build/observability/plan.json
+          printf '%s\n' '${{ needs.observability.outputs.validation_message }}' > build/observability/validation.txt
+          printf '%s\n' '${{ needs.observability.outputs.plan_json }}' > build/observability/plan.json
 
           cat > build/deployment/deployment-metadata.json <<JSON
           {
@@ -414,10 +453,10 @@ jobs:
             "observabilityContractPath": "${OBSERVABILITY_CONTRACT_PATH}",
             "effectiveObservabilityContractPath": "${EFFECTIVE_OBSERVABILITY_CONTRACT_PATH}",
             "exportStrategy": "${EXPORT_STRATEGY}",
-            "managedSuiteEnabled": "${{ steps.observability.outputs.managed_suite_enabled }}",
-            "managedSuiteGrafanaUrl": "${{ steps.observability.outputs.managed_suite_grafana_url }}",
-            "workloadDashboardUrl": "${{ steps.observability.outputs.workload_dashboard_url }}",
-            "effectiveCollectorEndpoint": "${{ steps.observability.outputs.effective_collector_endpoint }}"
+            "managedSuiteEnabled": "${{ needs.observability.outputs.managed_suite_enabled }}",
+            "managedSuiteGrafanaUrl": "${{ needs.observability.outputs.managed_suite_grafana_url }}",
+            "workloadDashboardUrl": "${{ needs.observability.outputs.workload_dashboard_url }}",
+            "effectiveCollectorEndpoint": "${{ needs.observability.outputs.effective_collector_endpoint }}"
           }
           JSON
 
@@ -445,6 +484,6 @@ jobs:
             echo "- Endpoint: ${{ steps.ecs-express.outputs.endpoint }}"
             echo "- Resource prefix: \`${RESOURCE_PREFIX}\`"
             echo "- Export strategy: \`${EXPORT_STRATEGY}\`"
-            echo "- Effective collector endpoint: \`${{ steps.observability.outputs.effective_collector_endpoint }}\`"
+            echo "- Effective collector endpoint: \`${{ needs.observability.outputs.effective_collector_endpoint }}\`"
             echo "- Log group: \`${LOG_GROUP_NAME}\`"
           } >> "$GITHUB_STEP_SUMMARY"
